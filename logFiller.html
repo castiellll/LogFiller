@@ -144,22 +144,24 @@
         const tableBody = document.querySelector('#flightTable tbody');
         const clearTableButton = document.getElementById('clearTableButton');
         const exportButton = document.getElementById('exportButton');
-
-        const crewCode = 'ADJISO'
-        const base = {
+     
+/* This part is to init before use */
+        const crewCode = 'XXXXXX' // Add your crewcode here 
+        const base = {            // Add your base here with lat and long for night calculation if can't find the dest airport 
             iataCode: 'RAK',
             latitude: 31.6295,
             longitude: -7.9811
         };
+        const rapidAPIKey = 'xxxxxxxxxxx' // add your rapidAPI key that will be used to het lat and long from airport code 
 
 
         document.getElementById('fileInput').addEventListener('change', function (event) {
-            const files = event.target.files; // Get the selected files
+            const files = event.target.files; 
             if (files.length > 0) {
                 Array.from(files).forEach(file => {
                     const reader = new FileReader();
                     reader.onload = function (e) {
-                        const text = e.target.result;  // File contents
+                        const text = e.target.result;  
                         parseFlightData(text);  // Parse the contents and populate the table
                     };
                     reader.readAsText(file);  // Read the file as text
@@ -204,7 +206,7 @@
                         flightData.flightFunction = landing === crewCode ? 'PF' : 'PM'; // Set PIC based on Landing info
 
                         // Calculate additional metrics
-                        flightData.Captain = captain; // Set captain correctly
+                        flightData.Captain = captain; 
                         flightData.Landings = flightData.flightFunction === 'PF' ? 1 : 0;  // Landings
                         flightData.Night = formatTime(await calculateNightTime(date, flightData.OffBlock, flightData.OnBlock, flightData.Route.split(' ')[0])); // Calculate total night time
                         flightData.FS_Night_Landings = flightData.flightFunction === 'PF' ? (flightData.Night === "00:00" ? 0 : 1) : 0;
@@ -281,7 +283,7 @@
                 method: 'GET',
                 headers: {
                     'X-RapidAPI-Host': 'airport-info.p.rapidapi.com',
-                    'X-RapidAPI-Key': '672892c2demsh6ba821c3dadf88ep128e95jsn7fa3a458dde6' // RapidAPI key
+                    'X-RapidAPI-Key': rapidAPIKey // RapidAPI key
                 }
             });
             const data = await response.json();
