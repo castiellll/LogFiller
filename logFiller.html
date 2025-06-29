@@ -1,0 +1,519 @@
+ <!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flight Data Parser</title>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            background-color: #f5f5f5;
+            margin: 0;
+            padding: 0;
+        }
+        h1 {
+            text-align: center;
+            margin-top: 20px;
+            color: #333;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .file-input-container, .button-container {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 20px;
+        }
+        input[type="file"], button {
+            padding: 10px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        input[type="file"]:hover, button:hover {
+            background-color: #0056b3;
+        }
+        .export-button {
+            background-color: #00b050;
+            color: white;
+            border: none;
+            padding: 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-left: 20px;
+        }
+        .export-button:hover {
+            background-color: #008037;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+        }
+        th, td {
+            padding: 12px;
+            border: 1px solid #ddd;
+            text-align: left;
+        }
+        th {
+            background-color: #007bff;
+            color: white;
+        }
+        td {
+            background-color: #fff;
+        }
+        td[contenteditable] {
+            background-color: #f5f5f5;
+        }
+        .hidden {
+            display: none;
+        }
+        .delete-btn {
+            background-color: transparent;
+            border: none;
+            cursor: pointer;
+            font-size: 1.2em;
+            color: red;
+        }
+        .delete-btn:hover {
+            color: darkred;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Flight Data Parser</h1>
+    <div class="container">
+        <div class="file-input-container">
+            <input type="file" id="fileInput" multiple> <!-- Allow multiple file selection -->
+        </div>
+
+        <div class="button-container">
+            <button id="clearTableButton" class="hidden">Clear Table</button> <!-- Button to clear the table -->
+            <button id="exportButton" class="export-button hidden">Export to CSV</button> <!-- Button to export the table -->
+        </div>
+
+        <table id="flightTable" class="hidden">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Tail Number</th>
+                    <th>Landings</th>
+                    <th>FS Night Landings</th>
+                    <th>FS Day Landings</th>
+                    <th>X-Country</th>
+                    <th>Night</th>
+                    <th>IMC</th>
+                    <th>SIC</th>
+                    <th>PIC</th>
+                    <th>Total Flight Time</th>
+                    <th>Route</th>
+                    <th>Comments</th>
+                    <th>Block In Time</th>
+                    <th>Block Out Time</th>
+                    <th>Co-Pilot Time</th>
+                    <th>Multi-Pilot Time</th>
+                    <th>Name of PIC</th>
+                    <th>Supervised PIC Time (PICUS)</th>
+                    <th>Delete</th> <!-- Bin for Deleting Row -->
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+
+        <h2 id="aircraftToAddTitle" class="hidden">Aircraft to Add</h2>
+        <table id="aircraftToAddTable" class="hidden">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Route</th>
+                    <th>Registration</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+
+    <script>
+        const table = document.getElementById('flightTable');
+        const tableBody = document.querySelector('#flightTable tbody');
+        const clearTableButton = document.getElementById('clearTableButton');
+        const exportButton = document.getElementById('exportButton');
+
+        const crewCode = 'ADJISO'
+        const base = {
+            iataCode: 'RAK',
+            latitude: 31.6295,
+            longitude: -7.9811
+        };
+
+
+        document.getElementById('fileInput').addEventListener('change', function (event) {
+            const files = event.target.files; // Get the selected files
+            if (files.length > 0) {
+                Array.from(files).forEach(file => {
+                    const reader = new FileReader();
+                    reader.onload = function (e) {
+                        const text = e.target.result;  // File contents
+                        parseFlightData(text);  // Parse the contents and populate the table
+                    };
+                    reader.readAsText(file);  // Read the file as text
+                });
+            }
+        });
+
+        async function parseFlightData(text) {
+            const lines = text.split('\n');
+            let date = '';
+            let flightData = {};
+            let captain = '';
+            let landing = '';  // Initialize for Landing to set PIC
+            let totalBlockMinutes = 0;  // Total block time in minutes
+
+            // First pass: Capture the captain's name and any other required details
+            for (let index = 0; index < lines.length; index++) {
+                const line = lines[index].trim();
+
+                if (line.startsWith('Flight Deck Crew')) {
+                    // The captain's name follows this line
+                    for (let i = index + 1; i < lines.length; i++) {
+                        const crewLine = lines[i].trim();
+                        const crewDetails = crewLine.split(':');
+                        if (crewDetails[1] && crewDetails[1].trim() === 'CP') {
+                            captain = crewDetails[2] ? crewDetails[2].trim() : 'Unknown';
+                            break;  // Stop searching once the captain is found
+                        }
+                    }
+                }
+            }
+
+            // Second pass: Now parse the flight data and use the captured captain's name
+            for (let index = 0; index < lines.length; index++) {
+                const line = lines[index].trim();
+
+                if (!date && /^\d{4}\/\d{2}\/\d{2}$/.test(line)) {
+                    date = line; // Capture the date
+                } else if (line.startsWith('FlightNumber')) {
+                    // New flight entry
+                    if (flightData.Registration) {
+                        flightData.flightFunction = landing === crewCode ? 'PF' : 'PM'; // Set PIC based on Landing info
+
+                        // Calculate additional metrics
+                        flightData.Captain = captain; // Set captain correctly
+                        flightData.Landings = flightData.flightFunction === 'PF' ? 1 : 0;  // Landings
+                        flightData.Night = formatTime(await calculateNightTime(date, flightData.OffBlock, flightData.OnBlock, flightData.Route.split(' ')[0])); // Calculate total night time
+                        flightData.FS_Night_Landings = flightData.flightFunction === 'PF' ? (flightData.Night === "00:00" ? 0 : 1) : 0;
+                        flightData.FS_Day_Landings = flightData.flightFunction === 'PF' ? (flightData.Night === "00:00" ? 1 : 0) : 0;
+                        flightData.X_Country = formatTime(totalBlockMinutes); // Total flight time
+                        flightData.IMC = flightData.X_Country; // IMC total flight time
+                        flightData.SIC = flightData.flightFunction === 'PM' ? flightData.X_Country : ''; // SIC
+                        flightData.PIC = flightData.flightFunction === 'PF' ? flightData.X_Country : ''; // PIC
+                        flightData.TotalBlock = formatTime(totalBlockMinutes); // Format total block time
+                        flightData.Route = flightData.Route || ''; // Ensure Route is available
+                        flightData.Comments = flightData.flightFunction === 'PF' ? 'PICUS IE.FCL' : ''; // Comments
+                        flightData.Block_In_Time = formatDateTime(date, flightData.OnBlock, false); // Format Block In Time
+                        flightData.Block_Out_Time = formatDateTime(date, flightData.OffBlock, true); // Format Block Out Time
+                        flightData.Co_Pilot_Time = flightData.flightFunction === 'PM' ? flightData.X_Country : ''; // Co-Pilot Time
+                        flightData.Multi_Pilot_Time = flightData.X_Country; // Multi-Pilot Time
+                        flightData.Name_of_PIC = captain; // Captain name
+
+                        addFlightToTable(flightData);  // Add the flight data to the table
+                    }
+                    flightData = { Date: date };  // Reset for new flight
+                    landing = '';  // Reset landing for new flight
+                    totalBlockMinutes = 0; // Reset total block time for new flight
+                } else if (line.startsWith('Registration')) {
+                    flightData.Registration = line.split(':').slice(1).join(':').trim(); // Parse Registration
+                } else if (line.startsWith('Off Block')) {
+                    flightData.OffBlock = line.split(':').slice(1).join(':').trim(); // Capture Off Block time as a string
+                } else if (line.startsWith('On Block')) {
+                    flightData.OnBlock = line.split(':').slice(1).join(':').trim(); // Capture On Block time as a string
+                } else if (line.startsWith('Total Block')) {
+                    const blockTime = line.split(':').slice(1).join(':').trim();
+                    totalBlockMinutes = parseBlockTime(blockTime); // Calculate total block time in minutes
+                } else if (line.startsWith('City Pair')) {
+                    // Extract the route (City Pair) and replace the dash "-" with a space
+                    flightData.Route = line.split(':').slice(1).join(':').trim().replace('-', ' ');
+                } else if (line.startsWith('Landing')) {
+                    landing = line.split(':').slice(1).join(':').trim();  // Capture Landing value for PIC logic
+                }
+            }
+
+            // Add the last flight data (if any)
+            if (flightData.Registration) {
+                flightData.Captain = captain; // Ensure captain is set before adding
+                flightData.flightFunction = landing === crewCode ? 'PF' : 'PM';  // Set PIC value to PF/PM based on Landing
+
+                // Calculate additional metrics for the last entry
+                flightData.Landings = flightData.flightFunction === 'PF' ? 1 : 0;  // Landings
+                flightData.Night = formatTime(await calculateNightTime(date, flightData.OffBlock, flightData.OnBlock, flightData.Route.split(' ')[0])); // Calculate total night time
+                flightData.FS_Night_Landings = flightData.flightFunction === 'PF' ? (flightData.Night === "00:00" ? 0 : 1) : 0 ;
+                flightData.FS_Day_Landings = flightData.flightFunction === 'PF' ? (flightData.Night === "00:00" ? 1 : 0) : 0 ;
+                flightData.X_Country = formatTime(totalBlockMinutes); // Total flight time
+                flightData.IMC = flightData.X_Country; // IMC total flight time
+                flightData.SIC = flightData.flightFunction === 'PM' ? flightData.X_Country : ''; // SIC
+                flightData.TotalBlock = formatTime(totalBlockMinutes); // Format total block time
+                flightData.Route = flightData.Route || ''; // Ensure Route is available
+                flightData.Comments = flightData.flightFunction === 'PF' ? 'PICUS IE.FCL' : ''; // Comments
+                flightData.Block_In_Time = formatDateTime(date, flightData.OnBlock, false); // Format Block In Time
+                flightData.Block_Out_Time = formatDateTime(date, flightData.OffBlock, true); // Format Block Out Time
+                flightData.Co_Pilot_Time = flightData.flightFunction === 'PM' ? flightData.X_Country : ''; // Co-Pilot Time
+                flightData.Multi_Pilot_Time = flightData.X_Country; // Multi-Pilot Time
+                flightData.Name_of_PIC = captain; // Ensure PIC is always filled with the captain name
+                flightData.PIC = flightData.flightFunction === 'PF' ? flightData.X_Country : '';
+
+                addFlightToTable(flightData);  // Add the last flight data to the table
+            }
+
+            // Show the table and clear button once data is added
+            table.classList.remove('hidden');
+            clearTableButton.classList.remove('hidden');
+            exportButton.classList.remove('hidden');
+        }
+
+        async function getLatLon(airportCode) {
+            const response = await fetch(`https://airport-info.p.rapidapi.com/airport?iata=${airportCode}`, {
+                method: 'GET',
+                headers: {
+                    'X-RapidAPI-Host': 'airport-info.p.rapidapi.com',
+                    'X-RapidAPI-Key': '672892c2demsh6ba821c3dadf88ep128e95jsn7fa3a458dde6' // RapidAPI key
+                }
+            });
+            const data = await response.json();
+
+            if (data && data.latitude && data.longitude) {
+                return {
+                    lat: data.latitude,
+                    lon: data.longitude
+                };
+            } else {
+                // default return RAK coordinates as it is the base 
+                return {
+                    lat: base.latitude,
+                    lon: base.longitude
+                };
+            }
+        }
+
+        // Function to calculate total night time
+        async function calculateNightTime(date, offBlock, onBlock, departureAirport) {
+            const latLon = await getLatLon(departureAirport); // Get latitude and longitude for the airport
+
+            const { lat, lon } = latLon; // Destructure lat/lon
+            const apiUrl = `https://api.sunrise-sunset.org/json?lat=${lat}&lng=${lon}&date=${date}&formatted=0`;
+            const response = await fetch(apiUrl);
+            const data = await response.json();
+
+            if (data.status === "OK") {
+                const sunrise = new Date(data.results.sunrise).toISOString().substring(11, 16);
+                const sunset = new Date(data.results.sunset).toISOString().substring(11, 16);
+                const nightStart = addMinutes(sunset, 30); // Start of aeronautical night
+                console.log("Night start : "+nightStart);
+                const nightEnd = subtractMinutes(sunrise, 30); // End of aeronautical night
+                console.log("Night ends : "+nightEnd);
+
+                return calculateTimeOverlap(offBlock, onBlock, nightStart, nightEnd, date);
+            } else {
+                throw new Error("Error fetching night time");
+            }
+        }
+
+        function addMinutes(time, minutes) {
+            // Split the time, allowing for the "HH:mm XX" format (ignores the XX part if present)
+            const [timePart] = time.split(' '); // Take only the "HH:mm" part
+            const [hours, mins] = timePart.split(':').map(Number); // Parse hours and minutes
+
+            const date = new Date();
+            date.setHours(hours);
+            date.setMinutes(mins + minutes);
+
+            return date.toTimeString().split(' ')[0].slice(0, 5); // Return HH:mm format (first 5 chars)
+        }
+
+        function subtractMinutes(time, minutes) {
+            // Split the time, allowing for the "HH:mm XX" format (ignores the XX part if present)
+            const [timePart] = time.split(' '); // Take only the "HH:mm" part
+            const [hours, mins] = timePart.split(':').map(Number); // Parse hours and minutes
+
+            const date = new Date();
+            date.setHours(hours);
+            date.setMinutes(mins - minutes);
+
+            return date.toTimeString().split(' ')[0].slice(0, 5); // Return HH:mm format (first 5 chars)
+        }
+
+        function calculateTimeOverlap(offBlock, onBlock, nightStart, nightEnd, date) {
+            let totalNightTime = 0;
+
+            // Check if onBlock time is after midnight (crosses to the next day)
+            const crossesMidnightBlock = onBlock < offBlock;
+
+            // If onBlock is after midnight, treat it as the next day
+            if (crossesMidnightBlock) {
+                onBlock = addDayToTime(onBlock);  // Move onBlock to the next day (24:00 or later)
+            }
+
+            nightEnd = addDayToTime(nightEnd);  // Night end is always on the next day
+
+            // Case 1: Flight ends before the night starts
+            if (onBlock <= nightStart) {
+                return 0; 
+            }
+
+            // Case 2: Flight starts before night and ends during the night
+            if (offBlock < nightStart && onBlock > nightStart) {
+                totalNightTime += getTimeDifference(nightStart, onBlock); // Time after nightStart
+            }
+
+            // Case 3: Flight is fully during the night
+            if (offBlock >= nightStart && onBlock <= nightEnd) {
+                totalNightTime += getTimeDifference(offBlock, onBlock); // Full flight in night
+            }
+
+            // Case 4: Flight starts at night but ends after the night ends
+            if (offBlock >= nightStart && offBlock < nightEnd && onBlock > nightEnd) {
+                totalNightTime += getTimeDifference(offBlock, nightEnd); // Flight ends after night ends
+            }
+
+            return totalNightTime;
+        }
+
+        // Add one day to time (for handling times crossing midnight)
+        function addDayToTime(time) {
+            const [hours, minutes] = time.split(':').map(Number);
+            const newHours = hours + 24;  // Move to the next day's time (24:xx, 25:xx, etc.)
+            return `${newHours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+        }
+
+        // Helper function to calculate time difference in minutes between two HH:mm times
+        function getTimeDifference(startTime, endTime) {
+            const [startHour, startMinute] = startTime.split(':').map(Number);
+            const [endHour, endMinute] = endTime.split(':').map(Number);
+
+            const start = new Date(0, 0, 0, startHour, startMinute);
+            const end = new Date(0, 0, 0, endHour, endMinute);
+
+            const diff = (end - start) / 60000; // Difference in minutes
+            return diff;
+        }
+
+        function parseTime(timeString) {
+            const [hours, minutes] = timeString.split(':').map(Number);
+            return hours * 60 + minutes; // Convert to total minutes
+        }
+
+        function formatTime(time) {
+            // Check if time is a number (total minutes)
+            if (typeof time === 'number') {
+                const hours = Math.floor(time / 60);
+                const minutes = time % 60;
+                return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+            }
+
+            // Ensure time is a string in HH:mm format
+            if (typeof time === 'string') {
+                const parts = time.split(':');
+                if (parts.length !== 2) return '00:00'; // Handle unexpected time formats
+                const hours = String(parts[0]).padStart(2, '0');
+                const minutes = String(parts[1]).padStart(2, '0');
+                return `${hours}:${minutes}`;
+            }
+
+            return '00:00'; // Default return for any unexpected input
+        }
+
+        function parseBlockTime(time) {
+            const parts = time.split(':');
+            if (parts.length !== 2) return 0; // Return 0 for unexpected time formats
+            return parseInt(parts[0]) * 60 + parseInt(parts[1]); // Convert to total minutes
+        }
+
+        function formatDateTime(date, time, isOffBlock) {
+            const [year,month,day] = date.split('/');
+            const hours = parseInt(time.split(':')[0], 10);
+            const minutes = parseInt(time.split(':')[1], 10);
+
+            // Create a date object from the provided date
+            const formattedDate = new Date(year, month - 1, day, hours, minutes); // Month is zero-based
+
+            // Check if the time is after midnight
+            if (formattedDate.getHours() >= 0 && formattedDate.getMinutes() >= 0 && (hours >= 0 && minutes >= 0 && !isOffBlock)) {
+                if (hours < 6) { // Consider adding a day if time is early morning
+                    formattedDate.setDate(formattedDate.getDate() + 1); // Add a day if the time is after midnight
+                }
+            }
+
+            // Format date to yyyy-MM-dd HH:mm:ssZ
+            const formattedDateString = `${formattedDate.getFullYear()}-${String(formattedDate.getMonth() + 1).padStart(2, '0')}-${String(formattedDate.getDate()).padStart(2, '0')} ${String(formattedDate.getHours()).padStart(2, '0')}:${String(formattedDate.getMinutes()).padStart(2, '0')}:00Z`;
+            return formattedDateString;
+        }
+
+        function addFlightToTable(flightData) {
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td contenteditable="true">${flightData.Date}</td>
+                <td contenteditable="true">${flightData.Registration}</td>
+                <td contenteditable="true">${flightData.Landings}</td>
+                <td contenteditable="true">${flightData.FS_Night_Landings}</td>
+                <td contenteditable="true">${flightData.FS_Day_Landings}</td>
+                <td contenteditable="true">${flightData.X_Country}</td>
+                <td contenteditable="true">${flightData.Night}</td>
+                <td contenteditable="true">${flightData.IMC}</td>
+                <td contenteditable="true">${flightData.SIC}</td>
+                <td contenteditable="true">${flightData.PIC}</td>
+                <td contenteditable="true">${flightData.TotalBlock}</td>
+                <td contenteditable="true">${flightData.Route}</td>
+                <td contenteditable="true">${flightData.Comments}</td>
+                <td contenteditable="true">${flightData.Block_In_Time}</td>
+                <td contenteditable="true">${flightData.Block_Out_Time}</td>
+                <td contenteditable="true">${flightData.Co_Pilot_Time}</td>
+                <td contenteditable="true">${flightData.Multi_Pilot_Time}</td>
+                <td contenteditable="true">${flightData.Name_of_PIC}</td>
+                <td contenteditable="true">${flightData.PIC}</td>
+                <td><button class="delete-btn" onclick="deleteRow(this)">🗑️</button></td> <!-- Delete button -->
+            `;
+            tableBody.appendChild(row);
+        }
+
+        function deleteRow(button) {
+            const row = button.parentNode.parentNode; // Get the row containing the delete button
+            row.remove(); // Remove the row
+        }
+
+        clearTableButton.addEventListener('click', function () {
+            // Clear the flight table body
+            tableBody.innerHTML = '';
+            // Hide the table and clear button
+            table.classList.add('hidden');
+            clearTableButton.classList.add('hidden');
+        });
+
+        // Function to export the table to CSV
+        exportButton.addEventListener('click', function() {
+            const rows = document.querySelectorAll('#flightTable tr');
+            const csv = [];
+            
+            rows.forEach(row => {
+                const cells = row.querySelectorAll('td, th');
+                // Create a new array for the row, excluding the last cell (delete button column)
+                const rowArray = Array.from(cells).slice(0, -1).map(cell => `"${cell.innerText.trim()}"`);
+                csv.push(rowArray.join(','));
+            });
+
+            const csvContent = csv.join('\n');
+            const blob = new Blob([csvContent], { type: 'text/csv' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = 'flight_log.csv';
+            link.click();
+        });
+
+    </script>
+
+</body>
+</html>
